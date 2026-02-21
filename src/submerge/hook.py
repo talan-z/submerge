@@ -43,7 +43,7 @@ class HookResult:
 
 def is_temp_embedded_subtitle(path: Path | None) -> bool:
     """Return True if this path is an extracted embedded subtitle temp file."""
-    return bool(path and path.name.endswith(".srt.tmp"))
+    return bool(path and path.name.endswith("tmp.srt"))
 
 
 def cleanup_temp_subtitle(path: Path | None) -> None:
@@ -111,7 +111,7 @@ def find_subtitle_path(video_path: Path, lang: str) -> Path | None:
 
     if track and getattr(track, "is_text", False):
         # Use a temp filename that won't be picked up by other tools
-        extracted_path = video_dir / f"{video_stem}.{lang}.embedded.srt.tmp"
+        extracted_path = video_dir / f"{video_stem}.{lang}.embedded.tmp.srt"
 
         # If already extracted and newer than video, reuse it
         try:
