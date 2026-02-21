@@ -168,13 +168,29 @@ def check_all_languages_present(
     """
     settings = settings or get_settings()
     result = {}
-    for lang in settings.required_langs:
-        path = find_subtitle_path(video_path, lang)
-        if path is None:
-            return None
-        result[lang] = path
-    return result
 
+    for lang in settings.required_langs:
+        logger.debug(f"Checking subtitle availability for: {lang}")
+
+        path = find_subtitle_path(video_path, lang)
+
+        if path is None:
+            logger.debug(f"Subtitle missing for language: {lang}")
+            continue
+
+        result[lang] = path
+
+    # AFTER loop finishes
+    if len(result) == len(settings.required_langs):
+        return result
+
+    logger.debug(
+        f"Not all required subtitles present. "
+        f"Found: {list(result.keys())}, "
+        f"Required: {settings.required_langs}"
+    )
+
+    return None
 
 def get_present_and_missing(
     video_path: Path,
