@@ -181,4 +181,5 @@ def health() -> dict:
         "status": "ok" if all_ok else "degraded",
         "ffmpeg": ffmpeg_available,
         "ffprobe": ffprobe_available,
+        "version": "custom",
     }
