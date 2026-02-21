@@ -10,6 +10,8 @@ from filelock import FileLock, Timeout
 
 from .config import SubtoolsSettings, get_settings
 from .merge import MergeConfig, merge_bilingual
+from .probe import list_subtitle_tracks, find_track_by_language, NoSubtitleTracksError
+from .extract import extract_subtitles, SubtitleExtractionError
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +41,23 @@ class HookResult:
     missing: list[str] | None = None
     reason: str | None = None
 
+def is_temp_embedded_subtitle(path: Path | None) -> bool:
+    """Return True if this path is an extracted embedded subtitle temp file."""
+    return bool(path and path.name.endswith(".srt.tmp"))
+
+
+def cleanup_temp_subtitle(path: Path | None) -> None:
+    """Delete the temporary extracted subtitle if it matches our temp naming."""
+    if not is_temp_embedded_subtitle(path):
+        return
+
+    try:
+        if path.exists():
+            path.unlink()
+            logger.debug(f"Deleted temporary embedded subtitle: {path}")
+    except Exception as e:
+        logger.warning(f"Failed to cleanup temp subtitle {path}: {e}")
+
 
 def validate_lang(lang: str, settings: SubtoolsSettings | None = None) -> str:
     """Validate and normalize a language.
@@ -64,6 +83,9 @@ def validate_lang(lang: str, settings: SubtoolsSettings | None = None) -> str:
 
 def find_subtitle_path(video_path: Path, lang: str) -> Path | None:
     """Find subtitle file for a language.
+    Priority:
+      1) embedded text track (extract if needed, write as *.srt.tmp)
+      2) external subtitle files (.srt/.ass and hearing-impaired variants)
 
     Searches in order: .srt, .ass, .hi.srt, .hi.ass
 
@@ -77,7 +99,43 @@ def find_subtitle_path(video_path: Path, lang: str) -> Path | None:
     video_dir = video_path.parent
     video_stem = video_path.stem
 
-    # Patterns to search in priority order
+    # --- 1) Try embedded text subtitle tracks first ---
+    try:
+        tracks = list_subtitle_tracks(video_path)
+        track = find_track_by_language(tracks, lang)
+    except NoSubtitleTracksError:
+        track = None
+    except Exception as e:
+        logger.warning(f"Subtitle probe failed for {video_path}: {e}")
+        track = None
+
+    if track and getattr(track, "is_text", False):
+        # Use a temp filename that won't be picked up by other tools
+        extracted_path = video_dir / f"{video_stem}.{lang}.embedded.srt.tmp"
+
+        # If already extracted and newer than video, reuse it
+        try:
+            if extracted_path.exists():
+                # optional mtime safety: only reuse if it's newer than the video
+                if extracted_path.stat().st_mtime >= video_path.stat().st_mtime:
+                    logger.debug(f"Using cached embedded subtitle: {extracted_path}")
+                    return extracted_path
+                # else fall through to re-extract
+        except Exception:
+            # ignore mtime edge-cases and attempt extraction
+            pass
+
+        # Attempt extraction
+        try:
+            logger.info(f"Extracting embedded subtitle track {track.index} -> {extracted_path}")
+            extract_subtitles(video_path, extracted_path, track_index=track.index)
+            return extracted_path
+        except SubtitleExtractionError as e:
+            logger.warning(f"Embedded subtitle extraction failed for {video_path}: {e}")
+        except Exception as e:
+            logger.warning(f"Unexpected error extracting embedded subtitle for {video_path}: {e}")
+
+    # --- 2) Fallback to external subtitle files ---
     patterns = [
         f"{video_stem}.{lang}.srt",
         f"{video_stem}.{lang}.ass",
@@ -287,6 +345,8 @@ def process_hook(
     lock_path = get_lock_path(video_path)
     lock = FileLock(lock_path, timeout=LOCK_TIMEOUT)
 
+    subtitle_path = find_subtitle_path(video_path, lang)
+
     try:
         with lock.acquire(timeout=LOCK_TIMEOUT):
             logger.debug(f"Lock acquired: {lock_path}")
@@ -322,6 +382,7 @@ def process_hook(
         logger.warning(f"Lock timeout for {video_path}")
         return HookResult(status="already_processing")
     finally:
+        #cleanup_temp_subtitle(subtitle_path)
         # Clean up lock file after use
         try:
             lock_path.unlink(missing_ok=True)
