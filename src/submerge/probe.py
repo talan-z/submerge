@@ -174,6 +174,9 @@ def find_track_by_language(
             # Match 2-char to 3-char (en -> eng) only if lengths are 2 and 3
             if len(language) == 2 and len(track_lang) == 3 and track_lang.startswith(language):
                 return track
+            # Dirty fix for German (common legacy tag)
+            if language == "de" and track_lang in {"ger", "deu"}:
+                return track
             # Match 3-char to 2-char (eng -> en) only if lengths are 3 and 2
             if len(language) == 3 and len(track_lang) == 2 and language.startswith(track_lang):
                 return track
